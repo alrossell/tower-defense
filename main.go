@@ -3,19 +3,20 @@ package main
 import (
 	"errors"
 	"fmt"
-
-	// "math/rand/v2"
+    "log"
 	"strings"
-	// "text/template"
-	// "net"
 	"reflect"
 	"time"
+    "os"
 
 	"example.com/tower-defense/cord"
 	"example.com/tower-defense/player"
+
+    "github.com/eiannone/keyboard"
 )
 
 const boardSize int = 14
+const boardRowSize int = boardSize * 2 + 3
 
 var board [boardSize][boardSize]int
 var round = 0
@@ -24,34 +25,100 @@ var startCord *cord.Cord = nil
 var endCord *cord.Cord = nil
 
 var numberOfPlayers = 0;
-var playerList []*player.Player
+var monsterList []*player.Player
 
 var gameMapPathCords []cord.Cord;
 
-var previousDisplayLength = boardSize + 2
+var userCursor *cord.Cord = &cord.Cord{ Row: 1, Col: 1 } 
+
+var towerPlacement [boardSize][boardSize]int
+var towerHitList [boardSize][boardSize]int
+
+var playerHealth = 100
+
+var tileChar = strings.Repeat(" ", 4)  
+var nextCursorX = 0
+var nextCursorY = 0
+
+var rowOffset = 0
+
+var orange = "200"
+var blue = "3"
+var green = "46"
+var red = "1"
+var white = "255"
+var cyan = "6"
 
 // --------------------------------
 // |        Print Functions       |
 // --------------------------------
 
-func printTile(row int, col int) {
+func printBoardTile(row int, col int, tileColor string) {
+    
+    // Have to inverse the row because it is stored inverted
+    row = boardSize - row - 1
 
-    for _, currentPlayer := range playerList {
+    fmt.Printf("\033[%d;%dH", row * 2 + 1 + rowOffset, col * 4 + 1)
+    fmt.Printf("\033[48;5;%vm%v\033[0m", tileColor, "    ")
+    fmt.Println()
+    fmt.Printf("\033[%d;%dH", row * 2 + 2 + rowOffset, col * 4 + 1)
+    fmt.Printf("\033[48;5;%vm%v\033[0m", tileColor, "    ")
+}
+
+func clearScreen() {
+    fmt.Print("\033[H")
+    fmt.Print("\033[2J")
+}
+
+func printTile(row int, col int) {
+    if towerPlacement[row][col] == 1 {
+        printBoardTile(row, col, blue)
+    } else if board[row][col] == 1 {
+        printBoardTile(row, col, red)
+    } else {
+        printBoardTile(row, col, white)
+    }
+
+}
+
+func printBuildTile(row int, col int) {
+    if userCursor.Row == row && userCursor.Col == col {
+        printBoardTile(row, col, green)
+        return
+    } 
+
+    printTile(row, col)
+}
+
+func printActionTile(row int, col int) {
+    for _, currentPlayer := range monsterList {
         if currentPlayer.CurrentCord.Row == row && currentPlayer.CurrentCord.Col == col {
-     	    fmt.Printf("\033[48;5;2m  \033[0m")
+            printBoardTile(row, col, cyan)
             return;
         }
     }
 
-    if board[row][col] == 1 {
-	    fmt.Printf("\033[48;5;1m  \033[0m")
-    } else {
-	    fmt.Printf("\033[48;5;255m  \033[0m")
-    }
+    printTile(row, col)
 }
 
+func printHeader() {
+    clearScreen()
+
+    fmt.Printf("Player Health: %d\n", playerHealth)
+    fmt.Printf("Board: Round %d\n", round)
+    rowOffset = 2
+}
+
+
 func initPrintBoard() {
-    fmt.Print("Board: Round 0\n")
+    // Erase the screen
+    fmt.Print("\033[2J")
+    // Move the cursor to the top left
+    fmt.Print("\033[H")
+
+    printDamageBoard()
+
+    printHeader()
 
     for Row := (boardSize - 1); Row >= 0; Row-- {
         for Col := 0; Col < boardSize; Col++ {
@@ -59,29 +126,48 @@ func initPrintBoard() {
         }
         fmt.Println()
     }
-
-    fmt.Print("Number of Player: 0\n")
 }
 
 func printBoard() {
-    // Resets the board
-    fmt.Printf("\033[%dF2K\r", previousDisplayLength)
-
-    previousDisplayLength = boardSize + 2 + len(playerList)
-
-    fmt.Printf("Board: Round %d\n", round)
+    printHeader()
 
     for Row := (boardSize - 1); Row >= 0; Row-- {
         for Col := 0; Col < boardSize; Col++ {
-            printTile(Row, Col)
+            printActionTile(Row, Col)
+        }
+        fmt.Println()
+    }
+    fmt.Printf("\033[%d;%dH", boardRowSize, 0)
+
+    fmt.Printf("Number of Player: %d\n", len(monsterList))
+    for _, currentMonster := range monsterList {
+        fmt.Printf("Row: %d, Col: %d, Health: %d\n", currentMonster.CurrentCord.Row, currentMonster.CurrentCord.Col, currentMonster.Health)
+    }
+}
+
+func buildPrintBoard() {
+    printHeader()
+    
+    for Row := (boardSize - 1); Row >= 0; Row-- {
+        for Col := 0; Col < boardSize; Col++ {
+            printBuildTile(Row, Col)
         }
         fmt.Println()
     }
 
-    fmt.Printf("Number of Player: %d\n", len(playerList))
-    for _, currentPlayer := range playerList {
-        fmt.Printf("Row: %d, Col: %d\n", currentPlayer.CurrentCord.Row, currentPlayer.CurrentCord.Col)
-    } 
+    fmt.Printf("\033[%d;%dH", boardRowSize, 0)
+    fmt.Printf("Row: %d, Col: %d \n", userCursor.Row, userCursor.Col)
+
+    printDamageBoard()
+}
+
+func printDamageBoard() {
+    for Row := (boardSize - 1); Row >= 0; Row-- {
+        for Col := 0; Col < boardSize; Col++ {
+            fmt.Printf("%2d ", towerHitList[Row][Col]) 
+        }
+        fmt.Println()
+    }
 }
 
 // ---------------------------------------
@@ -189,51 +275,143 @@ func initBoard() (error) {
 // |        Game Logic Functions        |
 // --------------------------------------
 
+func placeTower(row int, col int) {
+    towerPlacement[row][col] = 1
+
+    currTile := cord.Cord { Row: row, Col: col } 
+
+    nextTiles := []cord.Cord { 
+        { Row: 0, Col: 0}, { Row: 0, Col: 1}, { Row: 1, Col: 0 }, { Row: 0, Col: -1 }, { Row: -1, Col: 0 },
+    }
+
+    
+    for _, nextTile := range nextTiles {    
+        currTile.Row += nextTile.Row
+        currTile.Col += nextTile.Col
+
+        if currTile.Row < boardSize && currTile.Row >= 0 && currTile.Col < boardSize && currTile.Col >= 0 {
+            log.Println("thing2")
+            towerHitList[currTile.Row][currTile.Col] += 10 
+        }
+
+        currTile.Row -= nextTile.Row
+        currTile.Col -= nextTile.Col
+    }
+}
+
+func handleInput() (string) {
+    
+    if err := keyboard.Open(); err != nil {
+        log.Fatal(err)
+    }
+
+    defer keyboard.Close()
+
+    for {
+        rune, key, err := keyboard.GetKey()
+        if err != nil {
+            log.Fatal(err)
+        }
+    
+        if key == keyboard.KeyEsc {
+            return ""
+        }
+
+        keyChar := string(rune)
+
+        if (key == keyboard.KeyEnter || key == keyboard.KeySpace) && !isInGameMapPathCords(userCursor) {
+            placeTower(userCursor.Row, userCursor.Col)
+        // Up
+        } else if (key == keyboard.KeyArrowUp || keyChar == "k") && userCursor.Row < boardSize - 1 {
+            userCursor.Row++
+        // Left
+        } else if (key == keyboard.KeyArrowLeft || keyChar == "h") && userCursor.Col > 0 {
+            userCursor.Col--
+        // Down
+        } else if (key == keyboard.KeyArrowDown || keyChar == "j") && userCursor.Row > 0 {
+            userCursor.Row--
+        // Right
+        } else if (key == keyboard.KeyArrowRight || keyChar == "l") && userCursor.Col < boardSize - 1 {
+            userCursor.Col++
+        }
+
+        buildPrintBoard()
+    }
+}
+
+func addPlayers() {
+    if len(monsterList) < 5 {
+        newPlayer := player.Player {
+            CurrentCord: cord.Cord{
+                Row: gameMapPathCords[0].Row,
+                Col: gameMapPathCords[0].Col,
+            },
+            CurrentCordIndex: 0,
+            Health: 100,
+        }
+
+        monsterList = append(monsterList, &newPlayer)
+    }
+}
+
 func updateBoard() {
-    playerLen := len(playerList)
-    for index := 0; index < playerLen; {
-        if playerList[index].CurrentCord == *startCord {
-            playerList[index] = playerList[playerLen-1]
-            playerLen-- 
+    // Move all the monsters
+    for _, currentMonster := range monsterList {
+        currentMonster.CurrentCordIndex++
+        currentMonster.CurrentCord = gameMapPathCords[currentMonster.CurrentCordIndex]
+
+        damage := towerHitList[currentMonster.CurrentCord.Row][currentMonster.CurrentCord.Col]
+
+        fmt.Println("Monster at: ", currentMonster.CurrentCord.Row, currentMonster.CurrentCord.Col, " took damage: ", damage)
+
+        currentMonster.Health -= damage
+    }
+
+    // Clears all the monster that are at the finish line
+    monsterLen := len(monsterList)
+    for index := 0; index < monsterLen; {
+        if monsterList[index].Health <= 0 {
+            monsterList[index] = monsterList[monsterLen-1]
+            monsterLen-- 
+        } else if monsterList[index].CurrentCord == *startCord {
+            playerHealth -= 10
+            monsterList[index] = monsterList[monsterLen-1]
+            monsterLen-- 
         } else {
             index++
         }
     }
-    playerList = playerList[:playerLen] 
 
-    for _, currentPlayer := range playerList {
-        currentPlayer.CurrentCordIndex++
-        currentPlayer.CurrentCord = gameMapPathCords[currentPlayer.CurrentCordIndex]
-    }
-
+    monsterList = monsterList[:monsterLen] 
     round++
 }
 
 func gameMainLoop() {
     initPrintBoard()
-   
-    for {
-        updateBoard()
-      
-        if len(playerList) < 5 {
-            newPlayer := player.Player {
-                CurrentCord: cord.Cord{
-                    Row: gameMapPathCords[0].Row,
-                    Col: gameMapPathCords[0].Col,
-                },
-                CurrentCordIndex: 0,
-            }
 
-            playerList = append(playerList, &newPlayer)
+    actionPhase := false 
+
+    for (playerHealth > 0) {
+        if !actionPhase {
+            handleInput()  
+            actionPhase = true
+        } else {
+            updateBoard()
+            addPlayers()
+            time.Sleep(1000 * time.Millisecond)
+            printBoard()
         }
-
-        time.Sleep(1000 * time.Millisecond)
-        printBoard()
-
     }
 }
 
 func main() {
+
+    file, err := os.OpenFile("app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.SetOutput(file)
+
     initBoard()
     gameMainLoop()
 }

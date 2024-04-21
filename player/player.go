@@ -7,5 +7,6 @@ import (
 type Player struct {
     CurrentCord cord.Cord
     CurrentCordIndex int
+    Health int
 }
 
