@@ -276,6 +276,7 @@ func initBoard() (error) {
 // --------------------------------------
 
 func placeTower(row int, col int) {
+    log.Println("Placing tower at: ", row, col)
     towerPlacement[row][col] = 1
 
     currTile := cord.Cord { Row: row, Col: col } 
@@ -290,7 +291,6 @@ func placeTower(row int, col int) {
         currTile.Col += nextTile.Col
 
         if currTile.Row < boardSize && currTile.Row >= 0 && currTile.Col < boardSize && currTile.Col >= 0 {
-            log.Println("thing2")
             towerHitList[currTile.Row][currTile.Col] += 10 
         }
 
@@ -318,6 +318,8 @@ func handleInput() (string) {
         }
 
         keyChar := string(rune)
+
+        log.Printf("Key pressed: %d, Key char pressed: %s", key, keyChar)
 
         if (key == keyboard.KeyEnter || key == keyboard.KeySpace) && !isInGameMapPathCords(userCursor) {
             placeTower(userCursor.Row, userCursor.Col)
@@ -361,9 +363,6 @@ func updateBoard() {
         currentMonster.CurrentCord = gameMapPathCords[currentMonster.CurrentCordIndex]
 
         damage := towerHitList[currentMonster.CurrentCord.Row][currentMonster.CurrentCord.Col]
-
-        fmt.Println("Monster at: ", currentMonster.CurrentCord.Row, currentMonster.CurrentCord.Col, " took damage: ", damage)
-
         currentMonster.Health -= damage
     }
 
@@ -405,12 +404,17 @@ func gameMainLoop() {
 }
 
 func main() {
+    currentTime := time.Now()
+    filePath := "./log/"+currentTime.Format("2006-01-02::15:04:05")+".log"
 
-    file, err := os.OpenFile("app.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+    file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
     if err != nil {
         log.Fatal(err)
     }
+    defer file.Close()
+
     log.SetOutput(file)
+    log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
     initBoard()
     gameMainLoop()
