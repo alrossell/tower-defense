@@ -10,7 +10,7 @@ import (
     "os"
 
 	"example.com/tower-defense/cord"
-	"example.com/tower-defense/player"
+	"example.com/tower-defense/units"
 
     "github.com/eiannone/keyboard"
 )
@@ -18,21 +18,23 @@ import (
 const boardSize int = 14
 const boardRowSize int = boardSize * 2 + 3
 
-var board [boardSize][boardSize]int
-var round = 0
+var towerPositions [boardSize][boardSize]int
+var monsterPositions [boardSize][boardSize]int
 
+var round = 0
 var startCord *cord.Cord = nil 
 var endCord *cord.Cord = nil
 
-var numberOfPlayers = 0;
-var monsterList []*player.Player
+var numberOfTowers = 0
+var towerList []*units.Tower
+
+var numberOfMonsters = 0
+var monsterList []*units.Monster
 
 var gameMapPathCords []cord.Cord;
 
 var userCursor *cord.Cord = &cord.Cord{ Row: 1, Col: 1 } 
 
-var towerPlacement [boardSize][boardSize]int
-var towerHitList [boardSize][boardSize]int
 
 var playerHealth = 100
 
@@ -71,7 +73,7 @@ func clearScreen() {
 }
 
 func printTile(row int, col int) {
-    if towerPlacement[row][col] == 1 {
+    if towerPositions[row][col] == 1 {
         printBoardTile(row, col, blue)
     } else if board[row][col] == 1 {
         printBoardTile(row, col, red)
@@ -277,30 +279,10 @@ func initBoard() (error) {
 
 func placeTower(row int, col int) {
     log.Println("Placing tower at: ", row, col)
-    towerPlacement[row][col] = 1
-
-    currTile := cord.Cord { Row: row, Col: col } 
-
-    nextTiles := []cord.Cord { 
-        { Row: 0, Col: 0}, { Row: 0, Col: 1}, { Row: 1, Col: 0 }, { Row: 0, Col: -1 }, { Row: -1, Col: 0 },
-    }
-
     
-    for _, nextTile := range nextTiles {    
-        currTile.Row += nextTile.Row
-        currTile.Col += nextTile.Col
-
-        if currTile.Row < boardSize && currTile.Row >= 0 && currTile.Col < boardSize && currTile.Col >= 0 {
-            towerHitList[currTile.Row][currTile.Col] += 10 
-        }
-
-        currTile.Row -= nextTile.Row
-        currTile.Col -= nextTile.Col
-    }
 }
 
 func handleInput() (string) {
-    
     if err := keyboard.Open(); err != nil {
         log.Fatal(err)
     }
@@ -343,7 +325,7 @@ func handleInput() (string) {
 
 func addPlayers() {
     if len(monsterList) < 5 {
-        newPlayer := player.Player {
+        newPlayer := units.Monster {
             CurrentCord: cord.Cord{
                 Row: gameMapPathCords[0].Row,
                 Col: gameMapPathCords[0].Col,
